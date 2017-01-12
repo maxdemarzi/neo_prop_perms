@@ -29,6 +29,9 @@ public class GetAssociatesTest {
         req.put(neo4j.httpURI().resolve("/v1/service/Max/associates/C/permissions/age").toString(), null);
         req.put(neo4j.httpURI().resolve("/v1/service/Max/associates/D/permissions/id").toString(), null);
 
+        req.put(neo4j.httpURI().resolve("/v1/service/group/Administrators/associates/D/permissions/name").toString(), null);
+        req.put(neo4j.httpURI().resolve("/v1/service/group/Administrators/associates/D/permissions/age").toString(), null);
+
         HTTP.Response response = HTTP.GET(neo4j.httpURI().resolve("/v1/service/Max/associates/A").toString());
         List<HashMap<String, Object>> actual  = response.content();
 
@@ -43,6 +46,10 @@ public class GetAssociatesTest {
         req.put(neo4j.httpURI().resolve("/v1/service/Junior/associates/D/permissions/name").toString(), null);
         req.put(neo4j.httpURI().resolve("/v1/service/Junior/associates/D/permissions/age").toString(), null);
         req.delete(neo4j.httpURI().resolve("/v1/service/Junior/associates/D/permissions/age").toString());
+
+        req.put(neo4j.httpURI().resolve("/v1/service/group/Juniors/associates/C/permissions/id").toString(), null);
+        req.put(neo4j.httpURI().resolve("/v1/service/group/Juniors/associates/C/permissions/age").toString(), null);
+
         HTTP.Response response = HTTP.GET(neo4j.httpURI().resolve("/v1/service/Junior/associates/A").toString());
 
         List<HashMap<String, Object>> actual  = response.content();
@@ -54,7 +61,7 @@ public class GetAssociatesTest {
             "CREATE (u1:User {username: 'Max'})" +
             "CREATE (u2:User {username: 'Junior'})" +
             "CREATE (g1:Group {name: 'Administrators'})" +
-            "CREATE (g2:Group {name: 'Junior Analysts'})" +
+            "CREATE (g2:Group {name: 'Juniors'})" +
                     "CREATE (p1:Person {id: 'A', name: 'Tom', age: 35})" +
                     "CREATE (p2:Person {id: 'B', name: 'Tim', age: 36})" +
                     "CREATE (p3:Person {id: 'C', name: 'Tony', age: 37})" +
@@ -79,17 +86,17 @@ public class GetAssociatesTest {
                 }});
                 add(new HashMap<String, Object>() {{
                     put("id", "D");
-                    //put("name", "Todd");
-                    //put("age", 38);
+                    put("name", "Todd");
+                    put("age", 38);
                 }});
             }};
 
     private static final  HashSet<HashMap<String, Object>> expected4junior =
             new HashSet<HashMap<String, Object>>() {{
                 add(new HashMap<String, Object>() {{
-//                    put("id", "C");
+                    put("id", "C");
                     put("name", "Tony");
-//                    put("age", 37);
+                    put("age", 37);
                 }});
                 add(new HashMap<String, Object>() {{
 //                    put("id", "D");

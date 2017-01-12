@@ -42,21 +42,7 @@ public class Service {
     public static int belongsToRelationshipTypeId;
     public static int personLabelId;
     public static int personIdPropertyKeyId;
-
     private static final HashMap<String, Integer> keys = new HashMap();
-
-//    private static final LoadingCache<String, Integer> keys = Caffeine.newBuilder()
-//            .maximumSize(100)
-//            .build(propertyName -> getPropertyKey(propertyName));
-
-
-    private static Integer getPropertyKey(String propertyName) {
-        try (Transaction tx = dbapi.beginTx()) {
-            ThreadToStatementContextBridge ctx = dbapi.getDependencyResolver().resolveDependency(ThreadToStatementContextBridge.class);
-            ReadOperations ops = ctx.get().readOperations();
-            return ops.propertyKeyGetForName(propertyName);
-        }
-    }
 
     private static final LoadingCache<String, MutableRoaringBitmap> permissions = Caffeine.newBuilder()
             .maximumSize(10_000)
@@ -111,11 +97,6 @@ public class Service {
 
     public Service(@Context GraphDatabaseService db) throws PropertyKeyIdNotFoundKernelException {
         this.dbapi = (GraphDatabaseAPI) db;
-        ArrayList<String> propertyKeys = new ArrayList<String>(){{
-            add("id");
-            add("name");
-            add("age");
-        }};
         try (Transaction tx = db.beginTx()) {
             ThreadToStatementContextBridge ctx = dbapi.getDependencyResolver().resolveDependency(ThreadToStatementContextBridge.class);
             ReadOperations ops = ctx.get().readOperations();
@@ -126,11 +107,9 @@ public class Service {
             personLabelId = ops.labelGetForName("Person");
             personIdPropertyKeyId = ops.propertyKeyGetForName("id");
 
-            //ops.graphGetPropertyKeys()
-            for (String key : propertyKeys ) {
+            for (String key :db.getAllPropertyKeys() ) {
                 keys.put(key, ops.propertyKeyGetForName(key));
             }
-
             tx.success();
         }
     }
@@ -143,7 +122,7 @@ public class Service {
         ArrayList<Map<String,Object>> results = new ArrayList<>();
         MutableRoaringBitmap userPermissions = permissions.get(username);
         try (Transaction tx = db.beginTx()) {
-            Node person = db.findNode(Label.label("Person"), "id", id);
+            Node person = db.findNode(Labels.Person, "id", id);
             for (Relationship rel : person.getRelationships(Direction.BOTH, RelationshipType.withName("KNOWS"))) {
                 Node other = rel.getOtherNode(person);
                 Map<String, Object> properties = other.getAllProperties();
@@ -173,11 +152,11 @@ public class Service {
                                   @Context GraphDatabaseService db) throws IOException {
         Integer keyId = keys.get(property);
         try (Transaction tx = db.beginTx()) {
-            Node user = db.findNode(Label.label("User"), "username", username);
+            Node user = db.findNode(Labels.User, "username", username);
             tx.acquireWriteLock(user);
             byte[] bytes;
             MutableRoaringBitmap userPermissions = getRoaringBitmap(user);
-            Node person = db.findNode(Label.label("Person"), "id", id);
+            Node person = db.findNode(Labels.Person, "id", id);
             Integer permission = toIntExact((person.getId() << 8) | (keyId & 0xF));
             userPermissions.add(permission);
             userPermissions.runOptimize();
@@ -199,7 +178,7 @@ public class Service {
                                   @Context GraphDatabaseService db) throws IOException {
         Integer keyId = keys.get(property);
         try (Transaction tx = db.beginTx()) {
-            Node user = db.findNode(Label.label("User"), "username", username);
+            Node user = db.findNode(Labels.User, "username", username);
             tx.acquireWriteLock(user);
             MutableRoaringBitmap userPermissions = getRoaringBitmap(user);
             Node person = db.findNode(Label.label("Person"), "id", id);
@@ -208,6 +187,54 @@ public class Service {
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             userPermissions.serialize(new DataOutputStream(baos));
             user.setProperty("permissions", baos.toByteArray());
+            tx.success();
+        }
+        return Response.ok().build();
+    }
+
+    @PUT
+    @Path("/group/{name}/associates/{id}/permissions/{property}")
+    public Response addGroupPermission(@PathParam("name") final String name,
+                                  @PathParam("id") final String id,
+                                  @PathParam("property") final String property,
+                                  @Context GraphDatabaseService db) throws IOException {
+        Integer keyId = keys.get(property);
+        try (Transaction tx = db.beginTx()) {
+            Node group = db.findNode(Labels.Group, "name", name);
+            tx.acquireWriteLock(group);
+            byte[] bytes;
+            MutableRoaringBitmap userPermissions = getRoaringBitmap(group);
+            Node person = db.findNode(Labels.Person, "id", id);
+            Integer permission = toIntExact((person.getId() << 8) | (keyId & 0xF));
+            userPermissions.add(permission);
+            userPermissions.runOptimize();
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            baos.reset();
+            userPermissions.serialize(new DataOutputStream(baos));
+            bytes = baos.toByteArray();
+            group.setProperty("permissions", bytes);
+            tx.success();
+        }
+        return Response.ok().build();
+    }
+
+    @DELETE
+    @Path("/group/{name}/associates/{id}/permissions/{property}")
+    public Response removeGroupPermission(@PathParam("name") final String name,
+                                     @PathParam("id") final String id,
+                                     @PathParam("property") final String property,
+                                     @Context GraphDatabaseService db) throws IOException {
+        Integer keyId = keys.get(property);
+        try (Transaction tx = db.beginTx()) {
+            Node group = db.findNode(Labels.Group, "name", name);
+            tx.acquireWriteLock(group);
+            MutableRoaringBitmap userPermissions = getRoaringBitmap(group);
+            Node person = db.findNode(Label.label("Person"), "id", id);
+            Integer permission = toIntExact((person.getId() << 8) | (keyId & 0xF));
+            userPermissions.remove(permission);
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            userPermissions.serialize(new DataOutputStream(baos));
+            group.setProperty("permissions", baos.toByteArray());
             tx.success();
         }
         return Response.ok().build();
