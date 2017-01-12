@@ -7,9 +7,9 @@ import org.neo4j.harness.junit.Neo4jRule;
 import org.neo4j.server.rest.RestRequest;
 import org.neo4j.test.server.HTTP;
 
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
 
 public class GetAssociatesTest {
 
@@ -19,33 +19,35 @@ public class GetAssociatesTest {
             .withExtension("/v1", Service.class);
 
 
-
-    @Test
-    public void shouldRespondToSetAssociatesPermissionForMax() {
-        HTTP.POST(neo4j.httpURI().resolve("/v1/schema/create").toString());
-        RestRequest req = RestRequest.req();
-        req.put(neo4j.httpURI().resolve("/v1/service/Max/associates/A/permissions/name").toString(), null);
-    }
-
     @Test
     public void shouldRespondToGetAssociatesMethodForMax() {
         HTTP.POST(neo4j.httpURI().resolve("/v1/schema/create").toString());
         RestRequest req = RestRequest.req();
-        req.put(neo4j.httpURI().resolve("/v1/service/Max/associates/A/permissions/name").toString(), null);
+        req.put(neo4j.httpURI().resolve("/v1/service/Max/associates/B/permissions/name").toString(), null);
+        req.put(neo4j.httpURI().resolve("/v1/service/Max/associates/C/permissions/id").toString(), null);
+        req.put(neo4j.httpURI().resolve("/v1/service/Max/associates/C/permissions/name").toString(), null);
+        req.put(neo4j.httpURI().resolve("/v1/service/Max/associates/C/permissions/age").toString(), null);
+        req.put(neo4j.httpURI().resolve("/v1/service/Max/associates/D/permissions/id").toString(), null);
 
         HTTP.Response response = HTTP.GET(neo4j.httpURI().resolve("/v1/service/Max/associates/A").toString());
-        ArrayList<String> actual  = response.content();
-        Collections.sort(actual);
-        Assert.assertEquals(expected4max, actual);
+        List<HashMap<String, Object>> actual  = response.content();
+
+        Assert.assertEquals(expected4max, new HashSet<>(actual));
     }
 
     @Test
     public void shouldRespondToGetAssociatesMethodForJunior() {
         HTTP.POST(neo4j.httpURI().resolve("/v1/schema/create").toString());
+        RestRequest req = RestRequest.req();
+        req.put(neo4j.httpURI().resolve("/v1/service/Junior/associates/C/permissions/name").toString(), null);
+        req.put(neo4j.httpURI().resolve("/v1/service/Junior/associates/D/permissions/name").toString(), null);
+        req.put(neo4j.httpURI().resolve("/v1/service/Junior/associates/D/permissions/age").toString(), null);
+        req.delete(neo4j.httpURI().resolve("/v1/service/Junior/associates/D/permissions/age").toString());
         HTTP.Response response = HTTP.GET(neo4j.httpURI().resolve("/v1/service/Junior/associates/A").toString());
-        ArrayList<String> actual  = response.content();
-        Collections.sort(actual);
-        Assert.assertEquals(expected4junior, actual);
+
+        List<HashMap<String, Object>> actual  = response.content();
+        Assert.assertEquals(expected4junior, new HashSet<>(actual));
+
     }
 
     private static final String MODEL_STATEMENT =
@@ -59,15 +61,16 @@ public class GetAssociatesTest {
                     "CREATE (p4:Person {id: 'D', name: 'Todd', age: 38})" +
                     "CREATE (p1)-[:KNOWS {how:'friends'}]->(p2)" +
                     "CREATE (p1)-[:KNOWS {how:'friends'}]->(p3)" +
+                    "CREATE (p1)-[:KNOWS {how:'friends'}]->(p4)" +
                     "CREATE (u1)-[:BELONGS_TO]->(g1)" +
                     "CREATE (u2)-[:BELONGS_TO]->(g2)";
 
-    private static final ArrayList<HashMap<String, Object>> expected4max =
-            new ArrayList<HashMap<String, Object>>() {{
+    private static final HashSet<HashMap<String, Object>> expected4max =
+            new HashSet<HashMap<String, Object>>() {{
                 add(new HashMap<String, Object>() {{
-                    put("id", "B");
+                    //put("id", "B");
                     put("name", "Tim");
-                    put("age", 36);
+                    //put("age", 36);
                 }});
                 add(new HashMap<String, Object>() {{
                     put("id", "C");
@@ -76,27 +79,22 @@ public class GetAssociatesTest {
                 }});
                 add(new HashMap<String, Object>() {{
                     put("id", "D");
-                    put("name", "Tim");
-                    put("age", 36);
+                    //put("name", "Todd");
+                    //put("age", 38);
                 }});
             }};
 
-    private static final ArrayList<HashMap<String, Object>> expected4junior =
-            new ArrayList<HashMap<String, Object>>() {{
+    private static final  HashSet<HashMap<String, Object>> expected4junior =
+            new HashSet<HashMap<String, Object>>() {{
                 add(new HashMap<String, Object>() {{
-                    put("id", "B");
-                    put("name", "Tim");
-                    put("age", 36);
-                }});
-                add(new HashMap<String, Object>() {{
-                    put("id", "C");
+//                    put("id", "C");
                     put("name", "Tony");
-                    put("age", 37);
+//                    put("age", 37);
                 }});
                 add(new HashMap<String, Object>() {{
-                    put("id", "D");
-                    put("name", "Tim");
-                    put("age", 36);
+//                    put("id", "D");
+                    put("name", "Todd");
+//                    put("age", 38);
                 }});
             }};
 

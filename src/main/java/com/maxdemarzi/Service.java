@@ -7,6 +7,7 @@ import org.neo4j.cursor.Cursor;
 import org.neo4j.graphdb.*;
 import org.neo4j.kernel.api.ReadOperations;
 import org.neo4j.kernel.api.exceptions.EntityNotFoundException;
+import org.neo4j.kernel.api.exceptions.PropertyKeyIdNotFoundKernelException;
 import org.neo4j.kernel.api.exceptions.index.IndexNotFoundKernelException;
 import org.neo4j.kernel.api.exceptions.schema.IndexBrokenKernelException;
 import org.neo4j.kernel.api.exceptions.schema.SchemaRuleNotFoundException;
@@ -24,6 +25,7 @@ import javax.ws.rs.core.Context;
 import javax.ws.rs.core.Response;
 import java.io.*;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
@@ -41,9 +43,11 @@ public class Service {
     public static int personLabelId;
     public static int personIdPropertyKeyId;
 
-    private static final LoadingCache<String, Integer> keys = Caffeine.newBuilder()
-            .maximumSize(100)
-            .build(propertyName -> getPropertyKey(propertyName));
+    private static final HashMap<String, Integer> keys = new HashMap();
+
+//    private static final LoadingCache<String, Integer> keys = Caffeine.newBuilder()
+//            .maximumSize(100)
+//            .build(propertyName -> getPropertyKey(propertyName));
 
 
     private static Integer getPropertyKey(String propertyName) {
@@ -88,39 +92,9 @@ public class Service {
         byte[] nodeIds;
         if (ops.nodeHasProperty(userNodeId, permissionsPropertyKeyId)) {
             nodeIds = (byte[]) ops.nodeGetProperty(userNodeId, permissionsPropertyKeyId);
-        } else {
-            nodeIds = new byte[0];
+            ByteArrayInputStream bais = new ByteArrayInputStream(nodeIds);
+            rb.deserialize(new DataInputStream(bais));
         }
-
-        try {
-            rb.deserialize(new java.io.DataInputStream(new java.io.InputStream() {
-                int c = 0;
-
-                @Override
-                public int read() {
-                    return nodeIds[c++] & 0xff;
-                }
-
-                @Override
-                public int read(byte b[]) {
-                    return read(b, 0, b.length);
-                }
-
-                @Override
-                public int read(byte[] b, int off, int l) {
-                    System.arraycopy(nodeIds, c, b, off, l);
-                    c += l;
-                    return l;
-                }
-            }));
-        } catch (IOException ioe) {
-            // should never happen because we read from a byte array
-            throw new RuntimeException("unexpected error while deserializing from a byte array");
-        }
-
-
-        //ByteArrayInputStream bais = new ByteArrayInputStream(nodeIds);
-        //rb.deserialize(new DataInputStream(bais));
         return rb;
 
     }
@@ -135,8 +109,13 @@ public class Service {
         return rb;
     }
 
-    public Service(@Context GraphDatabaseService db) {
+    public Service(@Context GraphDatabaseService db) throws PropertyKeyIdNotFoundKernelException {
         this.dbapi = (GraphDatabaseAPI) db;
+        ArrayList<String> propertyKeys = new ArrayList<String>(){{
+            add("id");
+            add("name");
+            add("age");
+        }};
         try (Transaction tx = db.beginTx()) {
             ThreadToStatementContextBridge ctx = dbapi.getDependencyResolver().resolveDependency(ThreadToStatementContextBridge.class);
             ReadOperations ops = ctx.get().readOperations();
@@ -146,6 +125,12 @@ public class Service {
             belongsToRelationshipTypeId = ops.relationshipTypeGetForName("BELONGS_TO");
             personLabelId = ops.labelGetForName("Person");
             personIdPropertyKeyId = ops.propertyKeyGetForName("id");
+
+            //ops.graphGetPropertyKeys()
+            for (String key : propertyKeys ) {
+                keys.put(key, ops.propertyKeyGetForName(key));
+            }
+
             tx.success();
         }
     }
@@ -156,22 +141,21 @@ public class Service {
                                   @PathParam("id") final String id,
                                   @Context GraphDatabaseService db) throws IOException, SchemaRuleNotFoundException, IndexBrokenKernelException, IndexNotFoundKernelException, EntityNotFoundException {
         ArrayList<Map<String,Object>> results = new ArrayList<>();
-
+        MutableRoaringBitmap userPermissions = permissions.get(username);
         try (Transaction tx = db.beginTx()) {
-            MutableRoaringBitmap userPermissions = permissions.get(username);
-
             Node person = db.findNode(Label.label("Person"), "id", id);
             for (Relationship rel : person.getRelationships(Direction.BOTH, RelationshipType.withName("KNOWS"))) {
                 Node other = rel.getOtherNode(person);
                 Map<String, Object> properties = other.getAllProperties();
+                Map<String, Object> filteredProperties = new HashMap<>();
                 for (String key : properties.keySet()) {
-                    Integer permission = toIntExact((other.getId() * 100) + keys.get(key));
-                    if(!userPermissions.contains(permission)) {
-                        properties.remove(key);
+                    Integer permission = toIntExact((other.getId() << 8) | (keys.get(key) & 0xF));
+                    if(userPermissions.contains(permission)) {
+                       filteredProperties.put(key, properties.get(key));
                     }
                 }
-                if(!properties.isEmpty()) {
-                    results.add(properties);
+                if(!filteredProperties.isEmpty()) {
+                    results.add(filteredProperties);
                 }
             }
 
@@ -187,24 +171,21 @@ public class Service {
                                   @PathParam("id") final String id,
                                   @PathParam("property") final String property,
                                   @Context GraphDatabaseService db) throws IOException {
+        Integer keyId = keys.get(property);
         try (Transaction tx = db.beginTx()) {
             Node user = db.findNode(Label.label("User"), "username", username);
             tx.acquireWriteLock(user);
-            byte[] bytes = new byte[0];
-            try {
-                MutableRoaringBitmap userPermissions = getRoaringBitmap(user);
-                Node person = db.findNode(Label.label("Person"), "id", id);
-                Integer permission = toIntExact((person.getId() << 8) + keys.get(property));
-                userPermissions.add(permission);
-                userPermissions.runOptimize();
-                ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                userPermissions.serialize(new DataOutputStream(baos));
-                bytes = baos.toByteArray();
-            } catch ( Exception e ) {
-                System.out.println(e);
-            }
-                user.setProperty("permissions", bytes);
-
+            byte[] bytes;
+            MutableRoaringBitmap userPermissions = getRoaringBitmap(user);
+            Node person = db.findNode(Label.label("Person"), "id", id);
+            Integer permission = toIntExact((person.getId() << 8) | (keyId & 0xF));
+            userPermissions.add(permission);
+            userPermissions.runOptimize();
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            baos.reset();
+            userPermissions.serialize(new DataOutputStream(baos));
+            bytes = baos.toByteArray();
+            user.setProperty("permissions", bytes);
             tx.success();
         }
         return Response.ok().build();
@@ -216,12 +197,13 @@ public class Service {
                                   @PathParam("id") final String id,
                                   @PathParam("property") final String property,
                                   @Context GraphDatabaseService db) throws IOException {
+        Integer keyId = keys.get(property);
         try (Transaction tx = db.beginTx()) {
             Node user = db.findNode(Label.label("User"), "username", username);
             tx.acquireWriteLock(user);
             MutableRoaringBitmap userPermissions = getRoaringBitmap(user);
             Node person = db.findNode(Label.label("Person"), "id", id);
-            Integer permission = toIntExact((person.getId() << 8) + keys.get(property));
+            Integer permission = toIntExact((person.getId() << 8) | (keyId & 0xF));
             userPermissions.remove(permission);
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             userPermissions.serialize(new DataOutputStream(baos));
